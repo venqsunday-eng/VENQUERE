@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>VENQUERE Chat</title>
+
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+    <!-- HEADER -->
+    <header class="chat-header">
+
+        <a href="index.html" class="back-button">
+            ←
+        </a>
+
+        <img src="3.png" alt="VENQUERE Logo" class="logo">
+
+        <div class="chat-title">
+            <h2>VENQUERE</h2>
+            <span>Chat</span>
+        </div>
+
+    </header>
+
+
+    <!-- CHAT CONTENT -->
+    <main class="chat-content" id="chatContent">
+
+    </main>
+
+
+    <!-- ATTACHMENT PREVIEW -->
+    <div
+        class="attachment-preview"
+        id="attachmentPreview">
+    </div>
+
+
+    <!-- ATTACHMENT MENU -->
+    <div
+        class="attachment-menu"
+        id="attachmentMenu">
+
+        <button id="photoButton">
+            📷 Photo
+        </button>
+
+        <button id="videoButton">
+            🎥 Video
+        </button>
+
+        <button id="audioButton">
+            🎵 Audio
+        </button>
+
+        <button id="documentButton">
+            📄 Document
+        </button>
+
+        <button id="cameraButton">
+            📸 Camera
+        </button>
+
+        <button id="linkButton">
+            🔗 Link
+        </button>
+
+        <button id="locationButton">
+            📍 Location
+        </button>
+
+    </div>
+
+
+    <!-- CHAT BAR -->
+    <div class="chat-bar">
+
+        <button
+            id="plusButton"
+            class="composer-plus"
+            type="button">
+            ＋
+        </button>
+
+
+        <input
+            type="file"
+            id="photoInput"
+            accept="image/*"
+            hidden
+        >
+
+        <input
+            type="file"
+            id="videoInput"
+            accept="video/*"
+            hidden
+        >
+
+        <input
+            type="file"
+            id="audioInput"
+            accept="audio/*"
+            hidden
+        >
+
+        <input
+            type="file"
+            id="documentInput"
+            accept=".pdf,.doc,.docx,.txt"
+            hidden
+        >
+
+        <input
+            type="file"
+            id="cameraInput"
+            accept="image/*"
+            capture="environment"
+            hidden
+        >
+
+
+        <input
+            type="text"
+            id="chatInput"
+            placeholder="Chat"
+            autocomplete="off"
+        >
+
+
+        <button
+            id="voiceButton"
+            class="composer-voice"
+            type="button">
+            🎙️
+        </button>
+
+
+        <button
+            id="extraButton"
+            class="composer-extra"
+            type="button">
+            👋
+        </button>
+
+
+        <button
+            id="sendButton"
+            class="send-button"
+            type="button">
+            ↑
+        </button>
+
+    </div>
+
+
+    <!-- JAVASCRIPT -->
+    <script src="script.js"></script>
+
+</body>
+
+</html>
