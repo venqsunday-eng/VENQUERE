@@ -1600,6 +1600,17 @@ loadVoiceMessages();
 // ===============================
 
 const emojiCategories = {
+"🏴": [
+    "ke","rw","ug","tz","bi","ss","et","so",
+    "ng","gh","za","eg","in","cn","jp","kr",
+    "fr","de","it","es","gb","us","ca","br",
+    "au","at","be","ch","nl","pt","se","no",
+    "dk","fi","ie","pl","ua","tr","ru","gr",
+    "il","sa","ae","qa","pk","bd","np","lk",
+    "th","vn","id","my","ph","sg","nz","mx",
+    "ar","cl","co","pe","uy","ve","jm","cu"
+],
+
 
     "😀": [
         "😀","😃","😄","😁","😆","😅","😂","🤣",
@@ -1680,23 +1691,27 @@ const emojiCategories = {
 
 function createEmojiPicker() {
 
-    const existing =
-        document.querySelector(
-            ".emoji-picker"
-        );
+    const existing = document.querySelector(".emoji-picker");
 
     if (existing) {
-
         existing.remove();
-
         return;
     }
 
-    const picker =
-        document.createElement("div");
+    const picker = document.createElement("div");
 
-    picker.className =
-        "emoji-picker";
+    picker.className = "emoji-picker";
+
+    // Position mapema ili isionekane chini ya page
+    picker.style.position = "fixed";
+    picker.style.zIndex = "10000";
+    picker.style.width = "300px";
+    picker.style.maxHeight = "330px";
+    picker.style.background = "white";
+    picker.style.borderRadius = "16px";
+    picker.style.boxShadow = "0 10px 35px rgba(0,0,0,.25)";
+    picker.style.padding = "8px";
+    picker.style.overflow = "hidden";
 
     picker.innerHTML = `
 
@@ -1719,71 +1734,7 @@ function createEmojiPicker() {
         <div class="emoji-grid"></div>
     `;
 
-    document.body.appendChild(picker);
-
-    const grid =
-        picker.querySelector(
-            ".emoji-grid"
-        );
-
-    function showCategory(category) {
-
-        grid.innerHTML = "";
-
-        emojiCategories[category]
-            .forEach(emoji => {
-
-                const button =
-                    document.createElement("button");
-
-                button.type = "button";
-
-                button.textContent = emoji;
-
-                button.addEventListener(
-                    "click",
-                    event => {
-
-                        event.stopPropagation();
-
-                        insertEmoji(emoji);
-
-                    }
-                );
-
-                grid.appendChild(button);
-
-            });
-    }
-
-    picker
-        .querySelectorAll(
-            ".emoji-tabs button"
-        )
-        .forEach(button => {
-
-            button.addEventListener(
-                "click",
-                event => {
-
-                    event.stopPropagation();
-
-                    showCategory(
-                        button.dataset.category
-                    );
-
-                }
-            );
-
-        });
-
-    showCategory("😀");
-
-    const rect =
-        extraButton.getBoundingClientRect();
-
-    picker.style.position =
-        "fixed";
+    const rect = extraButton.getBoundingClientRect();
 
     picker.style.bottom =
         `${window.innerHeight - rect.top + 10}px`;
@@ -1791,6 +1742,95 @@ function createEmojiPicker() {
     picker.style.left =
         `${Math.max(10, rect.left - 250)}px`;
 
+    document.body.appendChild(picker);
+
+    const grid = picker.querySelector(".emoji-grid");
+
+    function showCategory(category) {
+
+        grid.innerHTML = "";
+
+        // FLAG CATEGORY
+        if (category === "🏴") {
+
+            emojiCategories[category].forEach(countryCode => {
+
+                const button = document.createElement("button");
+
+                button.type = "button";
+                button.title = countryCode.toUpperCase();
+
+                const flag = document.createElement("img");
+
+                flag.src =
+                    `https://flagcdn.com/w80/${countryCode}.png`;
+
+                flag.alt = "";
+
+                flag.style.width = "32px";
+                flag.style.height = "22px";
+                flag.style.objectFit = "cover";
+                flag.style.borderRadius = "3px";
+                flag.style.display = "block";
+
+                button.appendChild(flag);
+
+                button.addEventListener("click", event => {
+
+                    event.stopPropagation();
+
+                    insertEmoji(
+                        countryCode
+                    );
+
+                });
+
+                grid.appendChild(button);
+
+            });
+
+            return;
+        }
+
+        // NORMAL EMOJIS
+        emojiCategories[category].forEach(emoji => {
+
+            const button = document.createElement("button");
+
+            button.type = "button";
+
+            button.textContent = emoji;
+
+            button.addEventListener("click", event => {
+
+                event.stopPropagation();
+
+                insertEmoji(emoji);
+
+            });
+
+            grid.appendChild(button);
+
+        });
+    }
+
+    picker
+        .querySelectorAll(".emoji-tabs button")
+        .forEach(button => {
+
+            button.addEventListener("click", event => {
+
+                event.stopPropagation();
+
+                showCategory(
+                    button.dataset.category
+                );
+
+            });
+
+        });
+
+    showCategory("😀");
 }
 
 // ===============================
