@@ -2,59 +2,51 @@
 // VENQUERE CHAT - FULL SCRIPT
 // ===============================
 
-
 const chatContent = document.querySelector(".chat-content");
 const chatInput = document.getElementById("chatInput");
 const sendButton = document.getElementById("sendButton");
 const voiceButton = document.getElementById("voiceButton");
 const extraButton = document.getElementById("extraButton");
-
 const plusButton = document.getElementById("plusButton");
-const attachmentMenu = document.getElementById("attachmentMenu");
 const attachmentPreview = document.getElementById("attachmentPreview");
 
-// File inputs
-const photoInput = document.getElementById("photoInput");
-const videoInput = document.getElementById("videoInput");
-const audioInput = document.getElementById("audioInput");
-const documentInput = document.getElementById("documentInput");
-const cameraInput = document.getElementById("cameraInput");
-
-const photoButton = document.getElementById("photoButton");
-const videoButton = document.getElementById("videoButton");
-const audioButton = document.getElementById("audioButton");
-const documentButton = document.getElementById("documentButton");
-const linkButton = document.getElementById("linkButton");
-const cameraButton = document.getElementById("cameraButton");
-const locationButton = document.getElementById("locationButton");
-
-// ===============================
-// STORAGE
-// ===============================
-
 const MESSAGE_STORAGE = "venquere_chat_messages_v2";
+const VOICE_STORAGE = "venquere_saved_voice_messages";
 
-let messages = [];
+let messages = JSON.parse(localStorage.getItem(MESSAGE_STORAGE)) || [];
+let pendingVoice = null;
+let recording = false;
+let mediaRecorder = null;
+let voiceChunks = [];
+let recognition = null;
 
-try {
-    messages = JSON.parse(
-        localStorage.getItem(MESSAGE_STORAGE) || "[]"
-    );
-} catch {
-    messages = [];
-}
+let db;
 
 // ===============================
-// MESSAGE ID
+// INDEXED DB
 // ===============================
 
-function createMessageId() {
-    if (window.crypto && crypto.randomUUID) {
-        return crypto.randomUUID();
+const request = indexedDB.open("VENQUERE_CHAT", 1);
+
+request.onupgradeneeded = function (event) {
+    db = event.target.result;
+
+    if (!db.objectStoreNames.contains("attachments")) {
+        db.createObjectStore("attachments", {
+            keyPath: "id"
+        });
     }
+};
 
-    return Date.now().toString() + Math.random().toString(16).slice(2);
-}
+request.onsuccess = function (event) {
+    db = event.target.result;
+    loadMessages();
+    loadVoiceMessages();
+};
+
+request.onerror = function () {
+    console.log("IndexedDB error");
+};
 
 // ===============================
 // SAVE MESSAGES
@@ -68,13 +60,16 @@ function saveMessages() {
 }
 
 // ===============================
-// MESSAGE TIME
+// LOAD MESSAGES
 // ===============================
 
-function getTime() {
-    return new Date().toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit"
+function loadMessages() {
+    if (!chatContent) return;
+
+    chatContent.innerHTML = "";
+
+    messages.forEach(function (message) {
+        displayMessage(message);
     });
 }
 
@@ -83,197 +78,121 @@ function getTime() {
 // ===============================
 
 function displayMessage(message) {
-    const chatContent = document.querySelector(".chat-content");
     if (!chatContent) return;
 
-    const messageBox = document.createElement("div");
+    const wrapper = document.createElement("div");
+    wrapper.className = "message-wrapper";
 
-    messageBox.className = "message me saved-message";
-    messageBox.dataset.id = message.id;
-
-    messageBox.innerHTML = `
-        <div class="message-main">
-            <div class="message-text">
-                ${escapeHTML(message.text || "").replace(/\n/g, "<br>")}
-            </div>
-
-            <div class="message-attachments"></div>
-
-            <div class="message-time">
-                ${message.time}
-            </div>
-        </div>
-
-        <button
-            type="button"
-            class="message-more"
-            title="Options">
-            ⋮
-        </button>
-    `;
+    const messageDiv = document.createElement("div");
+    messageDiv.className = "message";
 
     if (message.starred) {
-        messageBox.classList.add("starred");
+        messageDiv.classList.add("starred");
     }
 
     if (message.pinned) {
-        messageBox.classList.add("pinned");
+        messageDiv.classList.add("pinned");
     }
 
-    chatContent.appendChild(messageBox);
+    messageDiv.dataset.id = message.id;
 
-    createMessageActions(messageBox, message);
+    const textDiv = document.createElement("div");
+    textDiv.className = "message-text";
+    textDiv.textContent = message.text || "";
 
-    // Onyesha picha/video zilizotumwa
-    if (message.attachments && message.attachments.length > 0) {
-        const attachmentsBox =
-            messageBox.querySelector(".message-attachments");
+    messageDiv.appendChild(textDiv);
 
-        message.attachments.forEach(id => {
-            showSentAttachment(id, attachmentsBox);
+    if (message.attachments && message.attachments.length) {
+        const attachmentsDiv = document.createElement("div");
+        attachmentsDiv.className = "message-attachments";
+
+        message.attachments.forEach(function (attachmentId) {
+            loadAttachment(attachmentId, attachmentsDiv);
         });
+
+        messageDiv.appendChild(attachmentsDiv);
     }
+
+    const time = document.createElement("span");
+    time.className = "message-time";
+
+    time.textContent = message.time || "";
+
+    messageDiv.appendChild(time);
+
+    const menuButton = document.createElement("button");
+    menuButton.className = "message-menu-button";
+    menuButton.textContent = "⋮";
+
+    menuButton.addEventListener("click", function (event) {
+        event.stopPropagation();
+        showMessageMenu(message, menuButton);
+    });
+
+    messageDiv.appendChild(menuButton);
+
+    wrapper.appendChild(messageDiv);
+    chatContent.appendChild(wrapper);
 
     chatContent.scrollTop = chatContent.scrollHeight;
 }
-
-// ===============================
-// ESCAPE HTML
-// ===============================
-
-function escapeHTML(text) {
-
-    const div = document.createElement("div");
-
-    div.textContent = text;
-
-    return div.innerHTML;
-}
-
-// ===============================
-// LOAD MESSAGES
-// ===============================
-
-function loadMessages() {
-
-    const chatContent =
-        document.querySelector(".chat-content");
-
-    if (!chatContent) return;
-
-    document
-        .querySelectorAll(".saved-message")
-        .forEach(el => el.remove());
-
-    messages.forEach(message => {
-        displayMessage(message);
-    });
-}
-
-// ===============================
-// SEND MESSAGE
-// ===============================
 
 // ===============================
 // SEND MESSAGE
 // ===============================
 
 function sendMessage(text) {
-
     text = text.trim();
 
-    // =========================
-    // SEND PENDING VOICE
-    // =========================
+    const voiceToSend = pendingVoice;
 
-    if (pendingVoice) {
+    const attachmentItems =
+        attachmentPreview
+            ? [...attachmentPreview.querySelectorAll(".attachment-item")]
+            : [];
 
-        const voiceToSend = pendingVoice;
+    const attachmentIds = attachmentItems
+        .filter(function (item) {
+            return !item.classList.contains("voice-preview-item");
+        })
+        .map(function (item) {
+            return item.dataset.id;
+        })
+        .filter(Boolean);
+
+    if (!text && !voiceToSend && attachmentIds.length === 0) {
+        return;
+    }
+
+    if (voiceToSend) {
+        saveVoiceMessage(
+            voiceToSend.audioBlob,
+            text || "Voice message"
+        );
 
         pendingVoice = null;
 
-        const transcript =
-            text || voiceToSend.transcript || "";
+        const voicePreview =
+            document.querySelector(".voice-preview-item");
 
-        saveVoiceMessage(
-            voiceToSend.audioBlob,
-            transcript
-        );
-
-        if (attachmentPreview) {
-
-            attachmentPreview
-                .querySelectorAll(".voice-preview-item")
-                .forEach(item => item.remove());
-
+        if (voicePreview) {
+            voicePreview.remove();
         }
-
-        chatInput.value = "";
-
-        chatInput.focus();
-
-        return;
     }
 
-    // =========================
-    // SEND ATTACHMENTS
-    // =========================
-
-    const attachmentIds = [];
-
-    if (attachmentPreview) {
-
-        attachmentPreview
-            .querySelectorAll(".attachment-item")
-            .forEach(item => {
-
-                if (
-                    item.dataset.id &&
-                    !item.classList.contains("voice-preview-item")
-                ) {
-
-                    attachmentIds.push(
-                        item.dataset.id
-                    );
-
-                }
-
-            });
-
-    }
-
-    // =========================
-    // NOTHING TO SEND
-    // =========================
-
-    if (
-        !text &&
-        attachmentIds.length === 0
-    ) {
-        return;
-    }
-
-    // =========================
-    // CREATE MESSAGE
-    // =========================
+    const now = new Date();
 
     const message = {
-
-        id: createMessageId(),
-
+        id: Date.now().toString(),
         text: text,
-
-        attachments: attachmentIds,
-
-        time: getTime(),
-
-        createdAt:
-            new Date().toISOString(),
-
+        time: now.toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit"
+        }),
+        createdAt: now.toISOString(),
         starred: false,
-
-        pinned: false
-
+        pinned: false,
+        attachments: attachmentIds
     };
 
     messages.push(message);
@@ -282,446 +201,273 @@ function sendMessage(text) {
 
     displayMessage(message);
 
-    chatInput.value = "";
+    if (chatInput) {
+        chatInput.value = "";
+        chatInput.dispatchEvent(
+            new Event("input", {
+                bubbles: true
+            })
+        );
+    }
 
     if (attachmentPreview) {
         attachmentPreview.innerHTML = "";
     }
-
-    chatInput.focus();
-
 }
+
 // ===============================
 // SEND BUTTON
 // ===============================
 
 if (sendButton) {
-
-    sendButton.addEventListener("click", () => {
-
-        sendMessage(chatInput.value);
-
+    sendButton.addEventListener("click", function () {
+        sendMessage(chatInput ? chatInput.value : "");
     });
 }
 
 // ===============================
 // ENTER TO SEND
 // ===============================
-document.addEventListener("keydown", event => {
 
-    if (event.key === "Enter" && !event.shiftKey) {
+if (chatInput) {
+    chatInput.addEventListener("keydown", function (event) {
+        if (event.key === "Enter" && !event.shiftKey) {
+            event.preventDefault();
 
-        const hasText =
-            chatInput &&
-            chatInput.value.trim() !== "";
-
-        const hasAttachment =
-            attachmentPreview &&
-            attachmentPreview.querySelector(".attachment-item");
-
-        if (!hasText && !hasAttachment) return;
-
-        event.preventDefault();
-
-        sendMessage(
-            chatInput ? chatInput.value : ""
-        );
-    }
-
-});
-
-// ===============================
-// MESSAGE OPTIONS
-// ===============================
-
-function createMessageActions(messageBox, message) {
-
-    const moreButton =
-        messageBox.querySelector(".message-more");
-
-    moreButton.addEventListener("click", event => {
-
-        event.stopPropagation();
-
-        closeAllMessageMenus();
-
-        const menu =
-            document.createElement("div");
-
-        menu.className = "message-menu";
-
-        menu.innerHTML = `
-
-            <button data-action="delete">
-                🗑️ Delete
-            </button>
-
-            <button data-action="copy">
-                📋 Copy
-            </button>
-
-            <button data-action="reply">
-                ↩️ Reply
-            </button>
-
-            <button data-action="star">
-                ${message.starred ? "⭐ Unstar" : "⭐ Star"}
-            </button>
-
-            <button data-action="pin">
-                ${message.pinned ? "📌 Unpin" : "📌 Pin"}
-            </button>
-
-            <button data-action="info">
-                ℹ️ Info
-            </button>
-
-        `;
-
-        messageBox.appendChild(menu);
-
-        menu
-            .querySelectorAll("button")
-            .forEach(button => {
-
-                button.addEventListener(
-                    "click",
-                    event => {
-
-                        event.stopPropagation();
-
-                        const action =
-                            button.dataset.action;
-
-                        handleMessageAction(
-                            action,
-                            message,
-                            messageBox,
-                            menu
-                        );
-                    }
-                );
-
-            });
-
+            sendMessage(chatInput.value);
+        }
     });
 }
 
 // ===============================
-// HANDLE MESSAGE ACTION
+// MESSAGE MENU
 // ===============================
 
-function handleMessageAction(
-    action,
-    message,
-    messageBox,
-    menu
-) {
+function showMessageMenu(message, button) {
+    const oldMenu = document.querySelector(".message-options-menu");
 
-    if (action === "delete") {
-
-        const confirmDelete =
-            confirm(
-                "Unataka kufuta message hii?"
-            );
-
-        if (!confirmDelete) return;
-
-        messages =
-            messages.filter(
-                item => item.id !== message.id
-            );
-
-        saveMessages();
-
-        messageBox.remove();
-
-        return;
+    if (oldMenu) {
+        oldMenu.remove();
     }
 
-    if (action === "copy") {
+    const menu = document.createElement("div");
 
-        navigator.clipboard
-            .writeText(message.text)
-            .then(() => {
+    menu.className = "message-options-menu";
 
-                alert("Message ime-copywa ✅");
+    const options = [
+        {
+            name: "Delete",
+            action: function () {
+                messages = messages.filter(function (item) {
+                    return item.id !== message.id;
+                });
 
-            })
-            .catch(() => {
-
-                alert(
-                    "Copy haikuweza kufanyika."
-                );
-
-            });
-
-        menu.remove();
-
-        return;
-    }
-
-    if (action === "reply") {
-
-        chatInput.value =
-            `↩️ ${message.text}`;
-
-        chatInput.focus();
-
-        menu.remove();
-
-        return;
-    }
-
-    if (action === "star") {
-
-        message.starred =
-            !message.starred;
-
-        saveMessages();
-
-        messageBox.classList.toggle(
-            "starred",
-            message.starred
-        );
-
-        menu.remove();
-
-        return;
-    }
-
-    if (action === "pin") {
-
-        message.pinned =
-            !message.pinned;
-
-        saveMessages();
-
-        messageBox.classList.toggle(
-            "pinned",
-            message.pinned
-        );
-
-        menu.remove();
-
-        return;
-    }
-
-    if (action === "info") {
-
-        alert(
-            "Message info\n\n" +
-            "Time: " +
-            message.time +
-            "\n\n" +
-            "Sent: " +
-            new Date(
-                message.createdAt
-            ).toLocaleString()
-        );
-
-        menu.remove();
-
-        return;
-    }
-}
-
-// ===============================
-// CLOSE MESSAGE MENUS
-// ===============================
-
-function closeAllMessageMenus() {
-
-    document
-        .querySelectorAll(".message-menu")
-        .forEach(menu => menu.remove());
-}
-
-document.addEventListener("click", () => {
-
-    closeAllMessageMenus();
-
-    const emojiPicker =
-        document.querySelector(".emoji-picker");
-
-    if (emojiPicker) {
-        emojiPicker.remove();
-    }
-
-});
-
-// ===============================
-// ATTACHMENT MENU
-// ===============================
-
-if (plusButton) {
-
-    plusButton.addEventListener("click", event => {
-
-        event.stopPropagation();
-
-        attachmentMenu.classList.toggle(
-            "show"
-        );
-
-    });
-}
-
-// ===============================
-// OPEN FILE INPUTS
-// ===============================
-
-if (photoButton) {
-    photoButton.onclick = () =>
-        photoInput.click();
-}
-
-if (videoButton) {
-    videoButton.onclick = () =>
-        videoInput.click();
-}
-
-if (audioButton) {
-    audioButton.onclick = () =>
-        audioInput.click();
-}
-
-if (documentButton) {
-    documentButton.onclick = () =>
-        documentInput.click();
-}
-
-if (cameraButton) {
-    cameraButton.onclick = () =>
-        cameraInput.click();
-}
-
-// ===============================
-// INDEXED DB
-// ===============================
-
-let db;
-
-const DB_NAME = "VENQUERE_CHAT";
-const DB_VERSION = 1;
-const STORE_NAME = "attachments";
-
-const request =
-    indexedDB.open(
-        DB_NAME,
-        DB_VERSION
-    );
-
-request.onupgradeneeded = event => {
-
-    db = event.target.result;
-
-    if (!db.objectStoreNames.contains(STORE_NAME)) {
-
-        db.createObjectStore(
-            STORE_NAME,
-            {
-                keyPath: "id"
+                saveMessages();
+                loadMessages();
             }
-        );
-    }
-};
+        },
+        {
+            name: "Copy",
+            action: function () {
+                navigator.clipboard.writeText(
+                    message.text || ""
+                );
+            }
+        },
+        {
+            name: "Reply",
+            action: function () {
+                if (chatInput) {
+                    chatInput.value =
+                        "Reply: " + (message.text || "");
 
-request.onsuccess = event => {
+                    chatInput.focus();
+                }
+            }
+        },
+        {
+            name: message.starred ? "Unstar" : "Star",
+            action: function () {
+                message.starred = !message.starred;
 
-    db = event.target.result;
+                saveMessages();
+                loadMessages();
+            }
+        },
+        {
+            name: message.pinned ? "Unpin" : "Pin",
+            action: function () {
+                message.pinned = !message.pinned;
 
-    loadAttachments();
-};
+                saveMessages();
+                loadMessages();
+            }
+        },
+        {
+            name: "Info",
+            action: function () {
+                alert(
+                    "Message time: " +
+                    message.time
+                );
+            }
+        }
+    ];
 
-request.onerror = () => {
+    options.forEach(function (option) {
+        const item = document.createElement("button");
 
-    console.log(
-        "IndexedDB haikufunguka."
-    );
+        item.textContent = option.name;
 
-};
+        item.addEventListener("click", function () {
+            option.action();
+            menu.remove();
+        });
+
+        menu.appendChild(item);
+    });
+
+    document.body.appendChild(menu);
+
+    const rect = button.getBoundingClientRect();
+
+    menu.style.position = "fixed";
+    menu.style.top = rect.bottom + 5 + "px";
+    menu.style.left = rect.left - 100 + "px";
+    menu.style.zIndex = "9999";
+}
 
 // ===============================
-// SAVE ATTACHMENT
+// ATTACHMENTS
 // ===============================
 
 function saveAttachment(file) {
+    return new Promise(function (resolve, reject) {
+        if (!db) {
+            reject("Database not ready");
+            return;
+        }
 
-    if (!db) return;
+        const id =
+            Date.now().toString() +
+            Math.random().toString(16).slice(2);
 
-    const attachment = {
+        const reader = new FileReader();
 
-        id: createMessageId(),
+        reader.onload = function () {
+            const attachment = {
+                id: id,
+                name: file.name,
+                type: file.type,
+                data: reader.result
+            };
 
-        name: file.name,
+            const transaction =
+                db.transaction(
+                    ["attachments"],
+                    "readwrite"
+                );
 
-        type: file.type,
+            const store =
+                transaction.objectStore("attachments");
 
-        size: file.size,
+            store.put(attachment);
 
-        blob: file,
+            transaction.oncomplete = function () {
+                resolve(id);
+            };
 
-        createdAt:
-            new Date().toISOString()
+            transaction.onerror = function () {
+                reject(transaction.error);
+            };
+        };
 
-    };
+        reader.onerror = function () {
+            reject(reader.error);
+        };
 
-    const transaction =
-        db.transaction(
-            STORE_NAME,
-            "readwrite"
-        );
-
-    transaction
-        .objectStore(STORE_NAME)
-        .put(attachment);
-
-    transaction.oncomplete = () => {
-
-        createAttachmentPreview(
-            attachment
-        );
-
-    };
+        reader.readAsDataURL(file);
+    });
 }
 
 // ===============================
-// LOAD ATTACHMENTS
+// LOAD ATTACHMENT
 // ===============================
 
-function loadAttachments() {
-
+function loadAttachment(id, container) {
     if (!db) return;
 
     const transaction =
         db.transaction(
-            STORE_NAME,
+            ["attachments"],
             "readonly"
         );
 
     const store =
-        transaction.objectStore(
-            STORE_NAME
-        );
+        transaction.objectStore("attachments");
 
-    const request =
-        store.getAll();
+    const request = store.get(id);
 
-    request.onsuccess = () => {
+    request.onsuccess = function () {
+        const attachment = request.result;
 
-        attachmentPreview.innerHTML = "";
+        if (!attachment) return;
 
-        request.result.forEach(
-            attachment => {
-
-                createAttachmentPreview(
-                    attachment
-                );
-
-            }
+        showSentAttachment(
+            attachment,
+            container
         );
     };
+}
+
+// ===============================
+// SHOW SENT ATTACHMENT
+// ===============================
+
+function showSentAttachment(
+    attachment,
+    container
+) {
+    const item = document.createElement("div");
+
+    item.className = "sent-attachment";
+
+    if (attachment.type.startsWith("image/")) {
+        const img = document.createElement("img");
+
+        img.src = attachment.data;
+
+        img.className = "sent-image";
+
+        item.appendChild(img);
+    }
+
+    else if (attachment.type.startsWith("video/")) {
+        const video = document.createElement("video");
+
+        video.src = attachment.data;
+
+        video.controls = true;
+
+        video.className = "sent-video";
+
+        item.appendChild(video);
+    }
+
+    else {
+        const link = document.createElement("a");
+
+        link.href = attachment.data;
+
+        link.download = attachment.name;
+
+        link.textContent =
+            "📄 " + attachment.name;
+
+        item.appendChild(link);
+    }
+
+    container.appendChild(item);
 }
 
 // ===============================
@@ -729,8 +475,141 @@ function loadAttachments() {
 // ===============================
 
 function createAttachmentPreview(
-    attachment
+    file,
+    id
 ) {
+    if (!attachmentPreview) return;
+
+    const item = document.createElement("div");
+
+    item.className = "attachment-item";
+
+    item.dataset.id = id;
+
+    if (file.type.startsWith("image/")) {
+        const img = document.createElement("img");
+
+        img.src = URL.createObjectURL(file);
+
+        item.appendChild(img);
+    }
+
+    else if (file.type.startsWith("video/")) {
+        const video = document.createElement("video");
+
+        video.src = URL.createObjectURL(file);
+
+        video.controls = true;
+
+        item.appendChild(video);
+    }
+
+    else {
+        const name = document.createElement("span");
+
+        name.textContent =
+            "📄 " + file.name;
+
+        item.appendChild(name);
+    }
+
+    const deleteButton =
+        document.createElement("button");
+
+    deleteButton.textContent = "×";
+
+    deleteButton.addEventListener(
+        "click",
+        function () {
+            deleteAttachment(id);
+            item.remove();
+        }
+    );
+
+    item.appendChild(deleteButton);
+
+    attachmentPreview.appendChild(item);
+}
+
+// ===============================
+// DELETE ATTACHMENT
+// ===============================
+
+function deleteAttachment(id) {
+    if (!db) return;
+
+    const transaction =
+        db.transaction(
+            ["attachments"],
+            "readwrite"
+        );
+
+    const store =
+        transaction.objectStore("attachments");
+
+    store.delete(id);
+}
+
+// ===============================
+// FILE INPUT
+// ===============================
+
+function handleFile(file) {
+    if (!file) return;
+
+    saveAttachment(file)
+        .then(function (id) {
+            createAttachmentPreview(
+                file,
+                id
+            );
+        })
+        .catch(function (error) {
+            console.log(error);
+        });
+}
+
+// ===============================
+// PLUS BUTTON
+// ===============================
+
+if (plusButton) {
+    plusButton.addEventListener(
+        "click",
+        function () {
+            const input =
+                document.createElement("input");
+
+            input.type = "file";
+
+            input.accept =
+                "image/*,video/*,audio/*,.pdf,.doc,.docx,.txt";
+
+            input.multiple = true;
+
+            input.addEventListener(
+                "change",
+                function () {
+                    [...input.files].forEach(
+                        handleFile
+                    );
+                }
+            );
+
+            input.click();
+        }
+    );
+}
+
+// ===============================
+// LINK
+// ===============================
+
+function addLink() {
+    const link =
+        prompt("Weka link hapa:");
+
+    if (!link) return;
 
     if (!attachmentPreview) return;
 
@@ -740,427 +619,163 @@ function createAttachmentPreview(
     item.className =
         "attachment-item";
 
-    item.dataset.id =
-        attachment.id;
+    item.textContent =
+        "🔗 " + link;
 
-    const url =
-        URL.createObjectURL(
-            attachment.blob
-        );
-
-    if (
-        attachment.type &&
-        attachment.type.startsWith("image/")
-    ) {
-
-        item.innerHTML = `
-
-            <div class="attachment-thumbnail">
-                <img src="${url}">
-            </div>
-
-            <button
-                type="button"
-                class="attachment-delete">
-                ×
-            </button>
-
-        `;
-
-    } else if (
-        attachment.type &&
-        attachment.type.startsWith("video/")
-    ) {
-
-        item.innerHTML = `
-
-            <div class="attachment-thumbnail">
-                <video
-                    src="${url}"
-                    muted>
-                </video>
-            </div>
-
-            <button
-                type="button"
-                class="attachment-delete">
-                ×
-            </button>
-
-        `;
-
-    } else if (
-        attachment.type &&
-        attachment.type.startsWith("audio/")
-    ) {
-
-        item.innerHTML = `
-
-            <div class="attachment-icon">
-                🎵
-            </div>
-
-            <div class="attachment-name">
-                ${escapeHTML(attachment.name)}
-            </div>
-
-            <button
-                type="button"
-                class="attachment-delete">
-                ×
-            </button>
-
-        `;
-
-    } else {
-
-        item.innerHTML = `
-
-            <div class="attachment-icon">
-                📄
-            </div>
-
-            <div class="attachment-name">
-                ${escapeHTML(attachment.name)}
-            </div>
-
-            <button
-                type="button"
-                class="attachment-delete">
-                ×
-            </button>
-
-        `;
-    }
+    item.dataset.id = "";
 
     attachmentPreview.appendChild(item);
 
-    const deleteButton =
-        item.querySelector(
-            ".attachment-delete"
-        );
-
-    deleteButton.addEventListener(
-        "click",
-        () => {
-
-            deleteAttachment(
-                attachment.id,
-                item
-            );
-
-        }
-    );
-}
-
-// SHOW SENT ATTACHMENT
-function showSentAttachment(id, container) {
-    if (!db || !container) return;
-
-    const transaction = db.transaction(
-        STORE_NAME,
-        "readonly"
-    );
-
-    const store = transaction.objectStore(
-        STORE_NAME
-    );
-
-    const request = store.get(id);
-
-    request.onsuccess = () => {
-        const attachment = request.result;
-
-        if (!attachment) return;
-
-        const url = URL.createObjectURL(
-            attachment.blob
-        );
-
-        const item =
-            document.createElement("div");
-
-        item.className = "sent-attachment";
-
-        if (
-            attachment.type &&
-            attachment.type.startsWith("image/")
-        ) {
-            item.innerHTML = `
-                <img
-                    src="${url}"
-                    class="sent-image"
-                >
-            `;
-        } else if (
-            attachment.type &&
-            attachment.type.startsWith("video/")
-        ) {
-            item.innerHTML = `
-                <video
-                    src="${url}"
-                    class="sent-video"
-                    controls>
-                </video>
-            `;
-        } else {
-            item.innerHTML = `
-                <div class="sent-file">
-                    📄 ${escapeHTML(attachment.name)}
-                </div>
-            `;
-        }
-
-        container.appendChild(item);
-    };
-}
-
-// ===============================
-// DELETE ATTACHMENT
-// ===============================
-
-function deleteAttachment(
-    id,
-    element
-) {
-
-    if (!db) return;
-
-    const transaction =
-        db.transaction(
-            STORE_NAME,
-            "readwrite"
-        );
-
-    transaction
-        .objectStore(STORE_NAME)
-        .delete(id);
-
-    transaction.oncomplete = () => {
-
-        element.remove();
-
-    };
-}
-
-// ===============================
-// FILE INPUT HANDLERS
-// ===============================
-
-function setupFileInput(input) {
-
-    if (!input) return;
-
-    input.addEventListener(
-        "change",
-        () => {
-
-            if (
-                input.files &&
-                input.files.length > 0
-            ) {
-
-                Array.from(
-                    input.files
-                ).forEach(file => {
-
-                    saveAttachment(file);
-
-                });
-            }
-
-            input.value = "";
-
-            attachmentMenu.classList.remove(
-                "show"
-            );
-
-        }
-    );
-}
-
-setupFileInput(photoInput);
-setupFileInput(videoInput);
-setupFileInput(audioInput);
-setupFileInput(documentInput);
-setupFileInput(cameraInput);
-
-// ===============================
-// LINK
-// ===============================
-
-if (linkButton) {
-
-    linkButton.addEventListener(
-        "click",
-        () => {
-
-            const link =
-                prompt(
-                    "Weka link hapa:"
-                );
-
-            if (!link) return;
-
-            chatInput.value +=
-                (chatInput.value ? " " : "") +
-                link;
-
-            chatInput.focus();
-
-            attachmentMenu.classList.remove(
-                "show"
-            );
-
-        }
-    );
+    if (chatInput) {
+        chatInput.value =
+            link;
+    }
 }
 
 // ===============================
 // LOCATION
 // ===============================
 
-if (locationButton) {
+function shareLocation() {
+    if (!navigator.geolocation) {
+        alert(
+            "Location haipatikani kwenye browser hii."
+        );
 
-    locationButton.addEventListener(
-        "click",
-        () => {
+        return;
+    }
 
-            if (!navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(
+        function (position) {
+            const lat =
+                position.coords.latitude;
 
-                alert(
-                    "Browser yako hai-support location."
-                );
+            const lon =
+                position.coords.longitude;
 
-                return;
-            }
-
-            navigator.geolocation.getCurrentPosition(
-                position => {
-
-                    const lat =
-                        position.coords.latitude;
-
-                    const lon =
-                        position.coords.longitude;
-
-                    const locationText =
-                        `📍 Location: ${lat}, ${lon}`;
-
-                    chatInput.value =
-                        locationText;
-
-                    chatInput.focus();
-
-                },
-                () => {
-
-                    alert(
-                        "Imeshindikana kupata location."
-                    );
-
-                }
+            sendMessage(
+                "📍 Location: " +
+                lat +
+                ", " +
+                lon
             );
-
-            attachmentMenu.classList.remove(
-                "show"
+        },
+        function () {
+            alert(
+                "Imeshindikana kupata location."
             );
-
         }
     );
 }
 
-
-
 // ===============================
-// VOICE RECORDING + TRANSCRIPTION
+// VOICE RECORDING
 // ===============================
 
-let mediaRecorder = null;
-let audioChunks = [];
-let recording = false;
-let recordingStream = null;
-let pendingVoice = null;
-
-let recognition = null;
-let voiceLanguage = "auto";
-const voiceLanguages = {
-    auto: "🌍 Auto Detect",
-    "sw-KE": "🇰🇪 Kiswahili",
-    "en-US": "🇺🇸 English",
-    "en-GB": "🇬🇧 English (UK)",
-    "fr-FR": "🇫🇷 Français",
-    "es-ES": "🇪🇸 Español",
-    "de-DE": "🇩🇪 Deutsch",
-    "it-IT": "🇮🇹 Italiano",
-    "pt-PT": "🇵🇹 Português",
-    "ar-SA": "🇸🇦 العربية",
-    "hi-IN": "🇮🇳 हिन्दी",
-    "ur-PK": "🇵🇰 اردو",
-    "zh-CN": "🇨🇳 中文",
-    "zh-TW": "🇹🇼 中文 (繁體)",
-    "ja-JP": "🇯🇵 日本語",
-    "ko-KR": "🇰🇷 한국어",
-    "ru-RU": "🇷🇺 Русский",
-    "tr-TR": "🇹🇷 Türkçe",
-    "nl-NL": "🇳🇱 Nederlands",
-    "pl-PL": "🇵🇱 Polski",
-    "uk-UA": "🇺🇦 Українська",
-    "el-GR": "🇬🇷 Ελληνικά",
-    "he-IL": "🇮🇱 עברית",
-    "fa-IR": "🇮🇷 فارسی",
-    "bn-BD": "🇧🇩 বাংলা",
-    "ta-IN": "🇮🇳 தமிழ்",
-    "te-IN": "🇮🇳 తెలుగు",
-    "th-TH": "🇹🇭 ไทย",
-    "vi-VN": "🇻🇳 Tiếng Việt",
-    "id-ID": "🇮🇩 Bahasa Indonesia",
-    "ms-MY": "🇲🇾 Bahasa Melayu",
-    "fil-PH": "🇵🇭 Filipino",
-    "am-ET": "🇪🇹 Amharic",
-    "ha-NG": "🇳🇬 Hausa",
-    "yo-NG": "🇳🇬 Yoruba",
-    "ig-NG": "🇳🇬 Igbo",
-    "zu-ZA": "🇿🇦 isiZulu",
-    "xh-ZA": "🇿🇦 isiXhosa",
-    "af-ZA": "🇿🇦 Afrikaans",
-    "sv-SE": "🇸🇪 Svenska",
-    "da-DK": "🇩🇰 Dansk",
-    "no-NO": "🇳🇴 Norsk",
-    "fi-FI": "🇫🇮 Suomi",
-    "cs-CZ": "🇨🇿 Čeština",
-    "sk-SK": "🇸🇰 Slovenčina",
-    "hu-HU": "🇭🇺 Magyar",
-    "ro-RO": "🇷🇴 Română",
-    "bg-BG": "🇧🇬 Български",
-    "hr-HR": "🇭🇷 Hrvatski",
-    "sr-RS": "🇷🇸 Српски",
-    "sl-SI": "🇸🇮 Slovenščina",
-    "ne-NP": "🇳🇵 नेपाली",
-    "si-LK": "🇱🇰 සිංහල",
-    "ml-IN": "🇮🇳 മലയാളം",
-    "kn-IN": "🇮🇳 ಕನ್ನಡ",
-    "gu-IN": "🇮🇳 ગુજરાતી",
-    "mr-IN": "🇮🇳 मराठी",
-    "pa-IN": "🇮🇳 ਪੰਜਾਬੀ"
-};
-let finalTranscript = "";
-let interimTranscript = "";
-
-const VOICE_STORAGE = "venquere_saved_voice_messages";
-
-let savedVoices = [];
-
-try {
-    savedVoices = JSON.parse(
-        localStorage.getItem(VOICE_STORAGE) || "[]"
+if (voiceButton) {
+    voiceButton.addEventListener(
+        "click",
+        function () {
+            if (recording) {
+                stopRecording();
+            } else {
+                startRecording();
+            }
+        }
     );
-} catch {
-    savedVoices = [];
+}
+
+async function startRecording() {
+    try {
+        const stream =
+            await navigator.mediaDevices.getUserMedia({
+                audio: true
+            });
+
+        voiceChunks = [];
+
+        mediaRecorder =
+            new MediaRecorder(stream);
+
+        mediaRecorder.ondataavailable =
+            function (event) {
+                if (event.data.size > 0) {
+                    voiceChunks.push(
+                        event.data
+                    );
+                }
+            };
+
+        mediaRecorder.onstop =
+            function () {
+                const audioBlob =
+                    new Blob(
+                        voiceChunks,
+                        {
+                            type:
+                                "audio/webm"
+                        }
+                    );
+
+                pendingVoice = {
+                    audioBlob:
+                        audioBlob,
+                    transcript:
+                        chatInput
+                            ? chatInput.value
+                            : ""
+                };
+
+                showPendingVoicePreview(
+                    audioBlob
+                );
+
+                stream
+                    .getTracks()
+                    .forEach(function (track) {
+                        track.stop();
+                    });
+            };
+
+        mediaRecorder.start();
+
+        recording = true;
+
+        if (voiceButton) {
+            voiceButton.classList.add(
+                "recording"
+            );
+        }
+
+        startSpeechRecognition();
+
+    } catch (error) {
+        console.log(error);
+
+        alert(
+            "Ruhusu microphone kwenye browser."
+        );
+    }
+}
+
+function stopRecording() {
+    if (mediaRecorder) {
+        mediaRecorder.stop();
+    }
+
+    recording = false;
+
+    if (voiceButton) {
+        voiceButton.classList.remove(
+            "recording"
+        );
+    }
+
+    stopSpeechRecognition();
 }
 
 // ===============================
-// SPEECH RECOGNITION
+// SPEECH TO TEXT
 // ===============================
 
 const SpeechRecognition =
@@ -1168,439 +783,373 @@ const SpeechRecognition =
     window.webkitSpeechRecognition;
 
 if (SpeechRecognition) {
+    recognition =
+        new SpeechRecognition();
 
-   recognition = new SpeechRecognition();
+    recognition.lang =
+        "sw-KE";
 
-recognition.lang =
-    voiceLanguage === "auto"
-        ? "sw-KE"
-        : voiceLanguage;
+    recognition.continuous = true;
 
-recognition.continuous = true;
+    recognition.interimResults = true;
 
-recognition.onresult = function (event) {
+    recognition.onresult =
+        function (event) {
+            let transcript = "";
 
-    let transcript = "";
-
-    for (let i = 0; i < event.results.length; i++) {
-        transcript += event.results[i][0].transcript;
-    }
-
-    transcript = transcript.trim();
-
-    if (chatInput) {
-        chatInput.value = transcript;
-
-        // Fanya browser itambue kuwa value imebadilika
-        chatInput.dispatchEvent(
-            new Event("input", { bubbles: true })
-        );
-    }
-
-    console.log("Speech:", transcript);
-};
-
-    recognition.onend = function () {
-
-        if (recording) {
-
-            try {
-                recognition.start();
-            } catch (error) {
-                console.log(error);
+            for (
+                let i = 0;
+                i < event.results.length;
+                i++
+            ) {
+                transcript +=
+                    event.results[i][0]
+                        .transcript;
             }
-        }
-    };
 
-}
+            transcript =
+                transcript.trim();
 
-// ===============================
-// SAVE VOICE
-// ===============================
+            if (chatInput) {
+                chatInput.value =
+                    transcript;
 
-function saveVoiceMessage(audioBlob, transcript) {
+                chatInput.dispatchEvent(
+                    new Event("input", {
+                        bubbles: true
+                    })
+                );
+            }
 
-    const reader = new FileReader();
-
-    reader.onload = function () {
-
-        const voiceMessage = {
-
-            id: createMessageId(),
-
-            audio: reader.result,
-
-            transcript: transcript,
-
-            time: getTime(),
-
-            createdAt:
-                new Date().toISOString()
+            console.log(
+                "Speech:",
+                transcript
+            );
         };
 
-        savedVoices.push(voiceMessage);
-
-        localStorage.setItem(
-            VOICE_STORAGE,
-            JSON.stringify(savedVoices)
-        );
-
-        displayVoiceMessage(
-            voiceMessage
-        );
-    };
-
-    reader.readAsDataURL(audioBlob);
+    recognition.onend =
+        function () {
+            if (recording) {
+                try {
+                    recognition.start();
+                } catch (error) {
+                    console.log(error);
+                }
+            }
+        };
 }
 
-function showPendingVoicePreview() {
+function startSpeechRecognition() {
+    if (!recognition) return;
 
-    if (!attachmentPreview || !pendingVoice) return;
+    try {
+        recognition.start();
+    } catch (error) {
+        console.log(error);
+    }
+}
 
-    // Ondoa preview ya voice iliyopita
-    attachmentPreview
-        .querySelectorAll(".voice-preview-item")
-        .forEach(item => item.remove());
+function stopSpeechRecognition() {
+    if (!recognition) return;
 
-    const item = document.createElement("div");
+    try {
+        recognition.stop();
+    } catch (error) {
+        console.log(error);
+    }
+}
+
+// ===============================
+// PENDING VOICE PREVIEW
+// ===============================
+
+function showPendingVoicePreview(
+    audioBlob
+) {
+    if (!attachmentPreview) return;
+
+    const oldPreview =
+        document.querySelector(
+            ".voice-preview-item"
+        );
+
+    if (oldPreview) {
+        oldPreview.remove();
+    }
+
+    const item =
+        document.createElement("div");
 
     item.className =
         "attachment-item voice-preview-item";
 
-    const url = URL.createObjectURL(
-        pendingVoice.audioBlob
-    );
-
-    item.innerHTML = `
-        <div class="voice-preview-audio">
-            <audio
-                src="${url}"
-                controls>
-            </audio>
-        </div>
-
-        <button
-            type="button"
-            class="attachment-delete">
-            ×
-        </button>
-    `;
-
-    attachmentPreview.appendChild(item);
-
-    item.querySelector(
-        ".attachment-delete"
-    ).addEventListener(
-        "click",
-        () => {
-
-            pendingVoice = null;
-
-            item.remove();
-
-            if (chatInput) {
-                chatInput.value = "";
-            }
-        }
-    );
-}
-
-// ===============================
-// DISPLAY SAVED VOICE
-// ===============================
-
-function displayVoiceMessage(voiceMessage) {
-
-    if (!chatContent) return;
-
-    const recordingMessage =
-        document.createElement("div");
-
-    recordingMessage.className =
-        "recording-message saved-voice";
-
-    recordingMessage.dataset.id =
-        voiceMessage.id;
-
     const audio =
         document.createElement("audio");
-
-    audio.className =
-        "recorded-audio";
 
     audio.controls = true;
 
     audio.src =
-        voiceMessage.audio;
+        URL.createObjectURL(audioBlob);
 
-    recordingMessage.appendChild(audio);
-
-    if (voiceMessage.transcript) {
-
-        const transcriptBox =
-            document.createElement("div");
-
-        transcriptBox.className =
-            "recording-text";
-
-        transcriptBox.textContent =
-            voiceMessage.transcript;
-
-        recordingMessage.appendChild(
-            transcriptBox
-        );
-    }
+    item.appendChild(audio);
 
     const deleteButton =
         document.createElement("button");
 
-    deleteButton.className =
-        "voice-delete";
+    deleteButton.textContent = "×";
 
-    deleteButton.type = "button";
+    deleteButton.onclick =
+        function () {
+            pendingVoice = null;
+            item.remove();
+        };
 
-    deleteButton.textContent = "🗑️";
+    item.appendChild(
+        deleteButton
+    );
 
-    recordingMessage.appendChild(
+    attachmentPreview.appendChild(
+        item
+    );
+}
+
+// ===============================
+// SAVE VOICE MESSAGE
+// ===============================
+
+function saveVoiceMessage(
+    audioBlob,
+    transcript
+) {
+    const reader =
+        new FileReader();
+
+    reader.onload =
+        function () {
+            const voices =
+                JSON.parse(
+                    localStorage.getItem(
+                        VOICE_STORAGE
+                    )
+                ) || [];
+
+            voices.push({
+                id:
+                    Date.now().toString(),
+                audio:
+                    reader.result,
+                transcript:
+                    transcript,
+                time:
+                    new Date().toLocaleTimeString(
+                        [],
+                        {
+                            hour:
+                                "2-digit",
+                            minute:
+                                "2-digit"
+                        }
+                    )
+            });
+
+            localStorage.setItem(
+                VOICE_STORAGE,
+                JSON.stringify(voices)
+            );
+
+            displayVoiceMessage(
+                voices[
+                    voices.length - 1
+                ]
+            );
+        };
+
+    reader.readAsDataURL(
+        audioBlob
+    );
+}
+
+// ===============================
+// DISPLAY VOICE MESSAGE
+// ===============================
+
+function displayVoiceMessage(
+    voice
+) {
+    if (!chatContent) return;
+
+    const wrapper =
+        document.createElement("div");
+
+    wrapper.className =
+        "recording-message saved-voice";
+
+    const audio =
+        document.createElement("audio");
+
+    audio.controls = true;
+
+    audio.src =
+        voice.audio;
+
+    wrapper.appendChild(
+        audio
+    );
+
+    const transcript =
+        document.createElement("div");
+
+    transcript.className =
+        "voice-transcript";
+
+    transcript.textContent =
+        voice.transcript ||
+        "Voice message";
+
+    wrapper.appendChild(
+        transcript
+    );
+
+    const deleteButton =
+        document.createElement("button");
+
+    deleteButton.textContent =
+        "Delete";
+
+    deleteButton.onclick =
+        function () {
+            deleteVoiceMessage(
+                voice.id
+            );
+
+            wrapper.remove();
+        };
+
+    wrapper.appendChild(
         deleteButton
     );
 
     chatContent.appendChild(
-        recordingMessage
-    );
-
-    chatContent.scrollTop =
-        chatContent.scrollHeight;
-
-    deleteButton.addEventListener(
-        "click",
-        function () {
-
-            savedVoices =
-                savedVoices.filter(
-                    voice =>
-                        voice.id !==
-                        voiceMessage.id
-                );
-
-            localStorage.setItem(
-                VOICE_STORAGE,
-                JSON.stringify(savedVoices)
-            );
-
-            recordingMessage.remove();
-        }
+        wrapper
     );
 }
 
 // ===============================
-// LOAD VOICES AFTER REFRESH
+// LOAD VOICE MESSAGES
 // ===============================
 
 function loadVoiceMessages() {
-
     if (!chatContent) return;
 
-    document
-        .querySelectorAll(".saved-voice")
-        .forEach(
-            element => element.remove()
+    const voices =
+        JSON.parse(
+            localStorage.getItem(
+                VOICE_STORAGE
+            )
+        ) || [];
+
+    voices.forEach(function (voice) {
+        displayVoiceMessage(
+            voice
         );
+    });
+}
 
-    savedVoices.forEach(
-        voiceMessage => {
+// ===============================
+// DELETE VOICE MESSAGE
+// ===============================
 
-            displayVoiceMessage(
-                voiceMessage
-            );
-        }
+function deleteVoiceMessage(id) {
+    let voices =
+        JSON.parse(
+            localStorage.getItem(
+                VOICE_STORAGE
+            )
+        ) || [];
+
+    voices =
+        voices.filter(function (voice) {
+            return voice.id !== id;
+        });
+
+    localStorage.setItem(
+        VOICE_STORAGE,
+        JSON.stringify(voices)
     );
 }
 
 // ===============================
-// START / STOP VOICE
-// ===============================
-
-// VOICE LANGUAGE SELECTOR
-const voiceLanguageSelect = document.createElement("select");
-
-voiceLanguageSelect.id = "voiceLanguageSelect";
-voiceLanguageSelect.title = "Chagua lugha ya voice";
-
-Object.entries(voiceLanguages).forEach(([code, name]) => {
-    const option = document.createElement("option");
-    option.value = code;
-    option.textContent = name;
-    voiceLanguageSelect.appendChild(option);
-});
-
-voiceLanguageSelect.value = "auto";
-
-voiceLanguageSelect.addEventListener("change", function () {
-    voiceLanguage = this.value;
-
-    if (recognition) {
-        recognition.lang =
-            voiceLanguage === "auto"
-                ? "sw-KE"
-                : voiceLanguage;
-    }
-});
-voiceButton.parentElement.insertBefore(
-    voiceLanguageSelect,
-    voiceButton
-);
-if (voiceButton) {
-
-    voiceButton.addEventListener(
-        "click",
-        async function () {
-
-            // =========================
-            // STOP RECORDING
-            // =========================
-
-            if (recording) {
-
-                recording = false;
-
-                if (mediaRecorder) {
-                    mediaRecorder.stop();
-                }
-
-                if (recognition) {
-
-                    try {
-                        recognition.stop();
-                    } catch (error) {
-                        console.log(error);
-                    }
-                }
-
-                voiceButton.classList.remove(
-                    "recording"
-                );
-
-                voiceButton.textContent =
-                    "🎙️";
-
-                return;
-            }
-
-            // =========================
-            // START RECORDING
-            // =========================
-
-            try {
-
-                recordingStream =
-                    await navigator.mediaDevices
-                        .getUserMedia({
-                            audio: true
-                        });
-
-                audioChunks = [];
-
-                mediaRecorder =
-                    new MediaRecorder(
-                        recordingStream
-                    );
-
-                mediaRecorder.ondataavailable =
-                    function (event) {
-
-                        if (
-                            event.data.size > 0
-                        ) {
-
-                            audioChunks.push(
-                                event.data
-                            );
-                        }
-                    };
-
-               mediaRecorder.onstop =
-    function () {
-
-        const audioBlob =
-            new Blob(
-                audioChunks,
-                {
-                    type: "audio/webm"
-                }
-            );
-
-        const transcript =
-            chatInput
-                ? chatInput.value.trim()
-                : "";
-
-        pendingVoice = {
-            audioBlob: audioBlob,
-            transcript: transcript
-        };
-
-        showPendingVoicePreview();
-
-        if (recordingStream) {
-
-            recordingStream
-                .getTracks()
-                .forEach(
-                    track => track.stop()
-                );
-
-            recordingStream = null;
-        }
-
-        finalTranscript = "";
-        interimTranscript = "";
-    };
-
-                if (recognition) {
-
-                    try {
-                        recognition.start();
-                    } catch (error) {
-                        console.log(error);
-                    }
-                }
-
-                voiceButton.classList.add(
-                    "recording"
-                );
-
-                voiceButton.textContent =
-                    "⏹️";
-
-            } catch (error) {
-
-                console.error(
-                    "Microphone error:",
-                    error
-                );
-
-                alert(
-                    "Ruhusu microphone ili kurecord sauti."
-                );
-            }
-        }
-    );
-}
-
-// ===============================
-// LOAD VOICES
-// ===============================
-
-loadVoiceMessages();
-
-
-// ===============================
-// EMOJI DATA
+// EMOJI PICKER
 // ===============================
 
 const emojiCategories = {
-"🏴": [
+    "😀": [
+        "😀","😃","😄","😁","😆","😅","😂",
+        "🤣","😊","😇","🙂","🙃","😉","😌",
+        "😍","🥰","😘","😗","😙","😚","😋",
+        "😛","😝","😜","🤪","🤨","🧐","🤓",
+        "😎","🥳","🤩","😭","😢","😡","🤔",
+        "😴","😱","😮","😇","🤗","🤭","🤫"
+    ],
+
+    "👋": [
+        "👋","🤚","🖐️","✋","🖖","👌","🤌",
+        "🤏","✌️","🤞","🤟","🤘","🤙","👈",
+        "👉","👆","👇","👍","👎","👏","🙌",
+        "🙏","💪","❤️","🧡","💛","💚","💙",
+        "💜","🖤","🤍","🤎","💔"
+    ],
+
+    "🐶": [
+        "🐶","🐱","🐭","🐹","🐰","🦊","🐻",
+        "🐼","🐨","🐯","🦁","🐮","🐷","🐸",
+        "🐵","🙈","🙉","🙊","🐔","🐧","🐦",
+        "🦋","🐝","🐞","🐢","🐍","🦎","🐠",
+        "🐟","🐬","🐳","🦈","🐘","🦒","🦓"
+    ],
+
+    "🍔": [
+        "🍎","🍊","🍋","🍌","🍉","🍇","🍓",
+        "🍒","🍑","🥭","🍍","🥝","🍅","🥑",
+        "🍔","🍕","🌭","🌮","🌯","🍿","🍗",
+        "🍟","🍩","🍪","🎂","🍰","🍫","🍭",
+        "☕","🍵","🥤","🧃"
+    ],
+
+    "⚽": [
+        "⚽","🏀","🏈","⚾","🎾","🏐","🏉",
+        "🥏","🎱","🏓","🏸","🥊","🥋","⛳",
+        "🏆","🥇","🥈","🥉","🎮","🎯","🎳",
+        "🎸","🎹","🎤","🎧","🎬","🎨"
+    ],
+
+    "🚗": [
+        "🚗","🚕","🚙","🚌","🚎","🏎️","🚓",
+        "🚑","🚒","🚐","🛻","🚚","🚛","🚜",
+        "🏍️","🛵","🚲","✈️","🚁","🚀","🚢",
+        "⛵","🚂","🚆","🚇"
+    ],
+
+    "💡": [
+        "💡","🔥","⭐","🌟","✨","💫","🌈",
+        "☀️","🌙","🌍","🌎","🌏","🌱","🌳",
+        "🌲","🌴","🌵","🏔️","⛰️","🏕️",
+        "🏠","🏢","🏙️","🏖️","🏝️"
+    ],
+
+    "🔣": [
+        "❤️","💯","✅","❌","⚠️","❗","❓",
+        "‼️","⁉️","⭕","🔴","🟠","🟡","🟢",
+        "🔵","🟣","⚫","⚪","🔔","🔒","🔓",
+        "🔑","💰","💎","🎁"
+    ]
+};
+
+// ===============================
+// FLAG EMOJIS / IMAGES
+// ===============================
+
+const flagCountries = [
     "ke","rw","ug","tz","bi","ss","et","so",
     "ng","gh","za","eg","in","cn","jp","kr",
     "fr","de","it","es","gb","us","ca","br",
@@ -1609,228 +1158,203 @@ const emojiCategories = {
     "il","sa","ae","qa","pk","bd","np","lk",
     "th","vn","id","my","ph","sg","nz","mx",
     "ar","cl","co","pe","uy","ve","jm","cu"
-],
-
-
-    "😀": [
-        "😀","😃","😄","😁","😆","😅","😂","🤣",
-        "😊","😇","🙂","🙃","😉","😌","😍","🥰",
-        "😘","😗","😙","😚","😋","😛","😝","😜",
-        "🤪","🤨","🧐","🤓","😎","🤩","🥳","😏",
-        "😒","😞","😔","😟","😕","🙁","☹️","😣",
-        "😖","😫","😩","🥺","😢","😭","😤","😠",
-        "😡","🤬","🤯","😳","🥵","🥶","😱","😨",
-        "😰","😥","😓","🤗","🤔","🫣","🤭","🫢"
-    ],
-
-    "👋": [
-        "👋","🤚","🖐️","✋","🖖","👌","🤏","✌️",
-        "🤞","🤟","🤘","🤙","👈","👉","👆","👇",
-        "☝️","👍","👎","✊","👊","🤛","🤜","👏",
-        "🙌","👐","🤲","🙏","💪","🫶","🫰","🤝",
-        "👀","👂","👃","🧠","👄","💋","👶","🧒"
-    ],
-
-    "🐶": [
-        "🐶","🐱","🐭","🐹","🐰","🦊","🐻","🐼",
-        "🐨","🐯","🦁","🐮","🐷","🐸","🐵","🙈",
-        "🙉","🙊","🐔","🐧","🐦","🐤","🦆","🦅",
-        "🦉","🐺","🐗","🐴","🦄","🐝","🐛","🦋",
-        "🐌","🐞","🐜","🪲","🐢","🐍","🦎","🦖",
-        "🐙","🦀","🐠","🐟","🐬","🐳","🐋","🦈"
-    ],
-
-    "🍔": [
-        "🍏","🍎","🍐","🍊","🍋","🍌","🍉","🍇",
-        "🍓","🫐","🍒","🍑","🥭","🍍","🥥","🥝",
-        "🍅","🥑","🍆","🥔","🥕","🌽","🌶️","🥒",
-        "🍔","🍟","🍕","🌭","🌮","🌯","🥪","🍿",
-        "🍩","🍪","🎂","🍰","🧁","🍫","🍬","🍭",
-        "☕","🍵","🥤","🧃","🍹","🍺","🍷","🍽️"
-    ],
-
-    "⚽": [
-        "⚽","🏀","🏈","⚾","🥎","🎾","🏐","🏉",
-        "🥏","🎱","🏓","🏸","🏒","🏑","🥍","🏏",
-        "⛳","🏹","🎣","🥊","🥋","🎽","🛹","🛼",
-        "🏆","🥇","🥈","🥉","🏅","🎖️","🎮","🎯",
-        "🎲","🧩","🎨","🎭","🎬","🎤","🎧","🎼"
-    ],
-
-    "🚗": [
-        "🚗","🚕","🚙","🚌","🚎","🏎️","🚓","🚑",
-        "🚒","🚐","🛻","🚚","🚛","🚜","🛵","🏍️",
-        "🚲","✈️","🚁","🚀","🛸","🚢","⛵","🚤",
-        "🏠","🏢","🏥","🏦","🏫","🏨","🗼","🗽",
-        "🌍","🌎","🌏","🏖️","🏝️","⛰️","🏕️","🌋"
-    ],
-
-    "💡": [
-        "💡","🔦","🕯️","📱","💻","⌨️","🖥️","🖨️",
-        "📷","📹","🎥","📺","📻","☎️","📞","📟",
-        "🔋","🔌","💾","💿","📀","📎","📌","📍",
-        "✂️","🔑","🔒","🔓","🔨","🔧","⚙️","🧰",
-        "📚","📖","📝","✏️","📅","📁","📂","🗂️"
-    ],
-
-    "🔣": [
-        "❤️","🧡","💛","💚","💙","💜","🖤","🤍",
-        "🤎","💔","❣️","💕","💞","💓","💗","💖",
-        "💘","💝","💟","☮️","✝️","☪️","🕉️","☯️",
-        "☢️","☣️","⚠️","❗","❓","‼️","⁉️","⭕",
-        "❌","✅","➕","➖","✖️","➗","💯","♻️"
-    ],
-
-   
-
-};
+];
 
 // ===============================
-// EMOJI PICKER
+// EXTRA EMOJI BUTTON
+// ===============================
+
+if (extraButton) {
+    extraButton.addEventListener(
+        "click",
+        function (event) {
+            event.stopPropagation();
+
+            const oldPicker =
+                document.querySelector(
+                    ".emoji-picker"
+                );
+
+            if (oldPicker) {
+                oldPicker.remove();
+                return;
+            }
+
+            createEmojiPicker();
+        }
+    );
+}
+
+// ===============================
+// CREATE EMOJI PICKER
 // ===============================
 
 function createEmojiPicker() {
+    const picker =
+        document.createElement("div");
 
-    const existing = document.querySelector(".emoji-picker");
+    picker.className =
+        "emoji-picker";
 
-    if (existing) {
-        existing.remove();
-        return;
-    }
+    const categories =
+        document.createElement("div");
 
-    const picker = document.createElement("div");
+    categories.className =
+        "emoji-categories";
 
-    picker.className = "emoji-picker";
+    Object.keys(
+        emojiCategories
+    ).forEach(function (category) {
+        const button =
+            document.createElement("button");
 
-    // Position mapema ili isionekane chini ya page
-    picker.style.position = "fixed";
-    picker.style.zIndex = "10000";
-    picker.style.width = "300px";
-    picker.style.maxHeight = "330px";
-    picker.style.background = "white";
-    picker.style.borderRadius = "16px";
-    picker.style.boxShadow = "0 10px 35px rgba(0,0,0,.25)";
-    picker.style.padding = "8px";
-    picker.style.overflow = "hidden";
+        button.textContent =
+            category;
 
-    picker.innerHTML = `
-
-        <div class="emoji-tabs">
-
-            ${Object.keys(emojiCategories)
-                .map(
-                    key => `
-                    <button
-                        type="button"
-                        data-category="${key}">
-                        ${key}
-                    </button>
-                `
-                )
-                .join("")}
-
-        </div>
-
-        <div class="emoji-grid"></div>
-    `;
-
-    const rect = extraButton.getBoundingClientRect();
-
-    picker.style.bottom =
-        `${window.innerHeight - rect.top + 10}px`;
-
-    picker.style.left =
-        `${Math.max(10, rect.left - 250)}px`;
-
-    document.body.appendChild(picker);
-
-    const grid = picker.querySelector(".emoji-grid");
-
-    function showCategory(category) {
-
-        grid.innerHTML = "";
-
-        // FLAG CATEGORY
-        if (category === "🏴") {
-
-            emojiCategories[category].forEach(countryCode => {
-
-                const button = document.createElement("button");
-
-                button.type = "button";
-                button.title = countryCode.toUpperCase();
-
-                const flag = document.createElement("img");
-
-                flag.src =
-                    `https://flagcdn.com/w80/${countryCode}.png`;
-
-                flag.alt = "";
-
-                flag.style.width = "32px";
-                flag.style.height = "22px";
-                flag.style.objectFit = "cover";
-                flag.style.borderRadius = "3px";
-                flag.style.display = "block";
-
-                button.appendChild(flag);
-
-                button.addEventListener("click", event => {
-
-                    event.stopPropagation();
-
-                    insertEmoji(
-                        countryCode
-                    );
-
-                });
-
-                grid.appendChild(button);
-
-            });
-
-            return;
-        }
-
-        // NORMAL EMOJIS
-        emojiCategories[category].forEach(emoji => {
-
-            const button = document.createElement("button");
-
-            button.type = "button";
-
-            button.textContent = emoji;
-
-            button.addEventListener("click", event => {
-
-                event.stopPropagation();
-
-                insertEmoji(emoji);
-
-            });
-
-            grid.appendChild(button);
-
-        });
-    }
-
-    picker
-        .querySelectorAll(".emoji-tabs button")
-        .forEach(button => {
-
-            button.addEventListener("click", event => {
-
-                event.stopPropagation();
-
-                showCategory(
-                    button.dataset.category
+        button.onclick =
+            function () {
+                showEmojiCategory(
+                    category,
+                    grid
                 );
+            };
 
-            });
+        categories.appendChild(
+            button
+        );
+    });
 
-        });
+    const flagButton =
+        document.createElement("button");
 
-    showCategory("😀");
+    flagButton.textContent = "🏴";
+
+    flagButton.onclick =
+        function () {
+            showFlags(grid);
+        };
+
+    categories.appendChild(
+        flagButton
+    );
+
+    picker.appendChild(
+        categories
+    );
+
+    const grid =
+        document.createElement("div");
+
+    grid.className =
+        "emoji-grid";
+
+    picker.appendChild(grid);
+
+    document.body.appendChild(
+        picker
+    );
+
+    showEmojiCategory(
+        "😀",
+        grid
+    );
+
+    if (extraButton) {
+        const rect =
+            extraButton.getBoundingClientRect();
+
+        picker.style.position =
+            "fixed";
+
+        picker.style.bottom =
+            window.innerHeight -
+            rect.top +
+            10 +
+            "px";
+
+        picker.style.right =
+            window.innerWidth -
+            rect.right +
+            "px";
+
+        picker.style.zIndex =
+            "99999";
+    }
+}
+
+// ===============================
+// SHOW EMOJI CATEGORY
+// ===============================
+
+function showEmojiCategory(
+    category,
+    grid
+) {
+    grid.innerHTML = "";
+
+    const emojis =
+        emojiCategories[category] || [];
+
+    emojis.forEach(function (emoji) {
+        const button =
+            document.createElement("button");
+
+        button.textContent =
+            emoji;
+
+        button.onclick =
+            function () {
+                insertEmoji(
+                    emoji
+                );
+            };
+
+        grid.appendChild(
+            button
+        );
+    });
+}
+
+// ===============================
+// SHOW FLAGS
+// ===============================
+
+function showFlags(grid) {
+    grid.innerHTML = "";
+
+    flagCountries.forEach(
+        function (countryCode) {
+            const img =
+                document.createElement("img");
+
+            img.src =
+                "https://flagcdn.com/w80/" +
+                countryCode +
+                ".png";
+
+            img.alt =
+                "flag";
+
+            img.title =
+                countryCode;
+
+            img.className =
+                "emoji-flag";
+
+            img.addEventListener(
+                "click",
+                function () {
+                    insertEmoji(
+                        "🏳️"
+                    );
+                }
+            );
+
+            grid.appendChild(
+                img
+            );
+        }
+    );
 }
 
 // ===============================
@@ -1838,262 +1362,253 @@ function createEmojiPicker() {
 // ===============================
 
 function insertEmoji(emoji) {
+    if (!chatInput) return;
 
     const start =
-        chatInput.selectionStart;
+        chatInput.selectionStart ||
+        chatInput.value.length;
 
     const end =
-        chatInput.selectionEnd;
+        chatInput.selectionEnd ||
+        chatInput.value.length;
 
-    const text =
-        chatInput.value;
+    const before =
+        chatInput.value.substring(
+            0,
+            start
+        );
+
+    const after =
+        chatInput.value.substring(
+            end
+        );
 
     chatInput.value =
-        text.slice(0, start) +
+        before +
         emoji +
-        text.slice(end);
+        after;
 
     chatInput.focus();
 
-    const newPosition =
-        start + emoji.length;
-
-    chatInput.setSelectionRange(
-        newPosition,
-        newPosition
-    );
+    chatInput.selectionStart =
+        chatInput.selectionEnd =
+            start + emoji.length;
 }
 
 // ===============================
-// EMOJI BUTTON
+// CLOSE EMOJI PICKER
 // ===============================
 
-if (extraButton) {
+document.addEventListener(
+    "click",
+    function (event) {
+        const picker =
+            document.querySelector(
+                ".emoji-picker"
+            );
 
-    extraButton.addEventListener(
-        "click",
-        event => {
+        if (!picker) return;
 
-            event.stopPropagation();
-
-            createEmojiPicker();
-
+        if (
+            !picker.contains(
+                event.target
+            ) &&
+            event.target !== extraButton
+        ) {
+            picker.remove();
         }
-    );
-}
+    }
+);
 
 // ===============================
-// DYNAMIC STYLES
+// DYNAMIC CSS
 // ===============================
 
 const dynamicStyle =
     document.createElement("style");
 
 dynamicStyle.textContent = `
+.message-wrapper {
+    position: relative;
+}
 
 .message {
     position: relative;
-    display: flex;
-    align-items: flex-start;
-    gap: 8px;
-    max-width: 75%;
-    margin: 10px 0;
-    padding: 10px 38px 10px 12px;
-    border-radius: 14px;
 }
 
-.message-main {
-    min-width: 0;
-}
-
-.message-text {
-    word-break: break-word;
-    overflow-wrap: anywhere;
-}
-
-.message-time {
-    font-size: 10px;
-    opacity: .65;
-    margin-top: 4px;
-}
-
-.message-more {
-    position: absolute;
-    right: 5px;
-    top: 5px;
-    width: 28px;
-    height: 28px;
+.message-menu-button {
     border: none;
     background: transparent;
-    cursor: pointer;
-    font-size: 20px;
-    line-height: 1;
-    border-radius: 50%;
-}
-
-.message-more:hover {
-    background: rgba(0,0,0,.08);
-}
-
-.message-menu {
-    position: absolute;
-    right: 5px;
-    top: 38px;
-    z-index: 9999;
-    width: 160px;
-    background: white;
-    border-radius: 12px;
-    padding: 6px;
-    box-shadow: 0 8px 25px rgba(0,0,0,.2);
-}
-
-.message-menu button {
-    width: 100%;
-    border: none;
-    background: transparent;
-    padding: 9px 10px;
-    text-align: left;
-    cursor: pointer;
-    border-radius: 8px;
-    font-size: 14px;
-}
-
-.message-menu button:hover {
-    background: #f1ecff;
-}
-
-.message.starred {
-    box-shadow: 0 0 0 2px rgba(255,193,7,.45);
-}
-
-.message.pinned::after {
-    content: "📌";
-    position: absolute;
-    right: 7px;
-    bottom: -8px;
-    font-size: 13px;
-}
-
-.emoji-picker {
-    z-index: 10000;
-    width: 300px;
-    max-height: 330px;
-    background: white;
-    border-radius: 16px;
-    box-shadow: 0 10px 35px rgba(0,0,0,.25);
-    padding: 8px;
-    overflow: hidden;
-}
-
-.emoji-tabs {
-    display: flex;
-    gap: 3px;
-    overflow-x: auto;
-    padding-bottom: 7px;
-}
-
-.emoji-tabs button {
-    flex: 0 0 auto;
-    border: none;
-    background: #f2f2f2;
-    border-radius: 8px;
-    padding: 7px;
     cursor: pointer;
     font-size: 18px;
 }
 
-.emoji-tabs button:hover {
-    background: #e6dcff;
+.message-options-menu {
+    background: white;
+    border-radius: 10px;
+    padding: 6px;
+    box-shadow: 0 4px 20px rgba(0,0,0,.2);
+}
+
+.message-options-menu button {
+    display: block;
+    width: 100%;
+    border: none;
+    background: white;
+    padding: 9px 14px;
+    text-align: left;
+    cursor: pointer;
+}
+
+.message-options-menu button:hover {
+    background: #f1f1f1;
+}
+
+.emoji-picker {
+    width: 330px;
+    max-height: 360px;
+    background: white;
+    border-radius: 16px;
+    padding: 10px;
+    box-shadow: 0 5px 25px rgba(0,0,0,.25);
+    overflow: hidden;
+}
+
+.emoji-categories {
+    display: flex;
+    gap: 5px;
+    overflow-x: auto;
+    padding-bottom: 8px;
+}
+
+.emoji-categories button {
+    border: none;
+    background: transparent;
+    font-size: 21px;
+    cursor: pointer;
 }
 
 .emoji-grid {
     display: grid;
-    grid-template-columns: repeat(8, 1fr);
-    gap: 3px;
-    max-height: 260px;
+    grid-template-columns:
+        repeat(7, 1fr);
+    gap: 7px;
+    max-height: 290px;
     overflow-y: auto;
 }
 
 .emoji-grid button {
     border: none;
     background: transparent;
+    font-size: 25px;
     cursor: pointer;
-    font-size: 22px;
     padding: 5px;
-    border-radius: 7px;
 }
 
 .emoji-grid button:hover {
-    background: #f0eaff;
+    background: #eee;
+    border-radius: 8px;
 }
 
-.attachment-thumbnail {
-    width: 52px;
-    height: 52px;
-    border-radius: 9px;
-    overflow: hidden;
-    flex-shrink: 0;
-}
-
-.attachment-thumbnail img,
-.attachment-thumbnail video {
-    width: 100%;
-    height: 100%;
+.emoji-flag {
+    width: 32px;
+    height: 22px;
     object-fit: cover;
-    display: block;
+    cursor: pointer;
+    border-radius: 3px;
 }
 
 .attachment-item {
-    position: relative;
-    width: 52px;
-    min-width: 52px;
-    height: 52px;
-    display: flex;
+    display: inline-flex;
     align-items: center;
-    justify-content: center;
+    gap: 6px;
+    margin: 5px;
+    padding: 5px;
+    background: #f2f2f2;
+    border-radius: 10px;
 }
 
-.attachment-icon {
-    width: 52px;
-    height: 52px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 25px;
-    background: #f1ecff;
-    border-radius: 9px;
+.attachment-item img,
+.attachment-item video {
+    width: 90px;
+    height: 70px;
+    object-fit: cover;
+    border-radius: 8px;
 }
 
-.attachment-name {
-    display: none;
-}
-
-.attachment-delete {
-    position: absolute;
-    right: -6px;
-    top: -6px;
-    width: 20px;
-    height: 20px;
+.attachment-item button {
     border: none;
-    border-radius: 50%;
-    background: #e53935;
+    background: #ff4444;
     color: white;
+    border-radius: 50%;
+    width: 22px;
+    height: 22px;
     cursor: pointer;
-    font-size: 14px;
-    line-height: 20px;
-    padding: 0;
 }
 
-.composer-voice.recording {
-    animation: voicePulse 1s infinite;
+.voice-preview-item {
+    display: flex;
+    align-items: center;
 }
 
-@keyframes voicePulse {
+.voice-preview-item audio {
+    width: 220px;
+}
+
+.recording {
+    animation: venquereRecordingPulse 1s infinite;
+}
+
+@keyframes venquereRecordingPulse {
+    0% {
+        transform: scale(1);
+    }
+
     50% {
         transform: scale(1.12);
     }
+
+    100% {
+        transform: scale(1);
+    }
 }
 
+.saved-voice {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    margin: 8px 0;
+}
+
+.saved-voice audio {
+    max-width: 280px;
+}
+
+.voice-transcript {
+    background: rgba(255,255,255,.15);
+    padding: 7px 10px;
+    border-radius: 8px;
+}
+
+.message-attachments {
+    margin-top: 6px;
+}
+
+.sent-attachment {
+    margin-top: 5px;
+}
+
+.sent-image,
+.sent-video {
+    max-width: 220px;
+    max-height: 180px;
+    object-fit: cover;
+    border-radius: 10px;
+}
+
+.sent-file {
+    padding: 8px;
+}
 `;
 
 document.head.appendChild(
@@ -2101,34 +1616,34 @@ document.head.appendChild(
 );
 
 // ===============================
-// START
+// SENT ATTACHMENT CSS
 // ===============================
 
-loadMessages();
-
-const sentAttachmentStyle = document.createElement("style");
+const sentAttachmentStyle =
+    document.createElement("style");
 
 sentAttachmentStyle.textContent = `
 .sent-attachment {
-    margin-top: 8px;
+    display: block;
 }
 
 .sent-image,
 .sent-video {
-    width: 180px;
-    max-width: 100%;
-    max-height: 220px;
-    object-fit: cover;
+    max-width: 220px;
+    max-height: 180px;
     border-radius: 10px;
-    display: block;
+    object-fit: cover;
 }
 
-.sent-file {
-    padding: 8px 10px;
-    background: #f1ecff;
+.sent-attachment a {
+    display: inline-block;
+    padding: 8px 12px;
+    background: #eeeeee;
     border-radius: 8px;
-    font-size: 13px;
+    text-decoration: none;
 }
 `;
 
-document.head.appendChild(sentAttachmentStyle);
+document.head.appendChild(
+    sentAttachmentStyle
+);
